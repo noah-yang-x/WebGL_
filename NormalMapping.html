@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WebGL Procedural Normal Map & Diffuse</title>
+  <style>
+    body { margin: 0; background: #000; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+  </style>
+</head>
+<body>
+<canvas id="glcanvas"></canvas>
+
+<script type="x-shader/x-vertex" id="vertex-shader">
+attribute vec3 position;
+attribute vec2 uv;
+varying vec2 vUv;
+
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position, 1.0);
+}
+</script>
+
+<script type="x-shader/x-fragment" id="fragment-shader">
+precision highp float;
+
+varying vec2 vUv;
+uniform sampler2D uDiffuse;
+uniform vec3 uLightDir;
+
+float height(vec2 uv) {
+  // Procedural height (e.g. wave pattern)
+  return sin(uv.x * 20.0) * 0.1 + cos(uv.y * 20.0) * 0.1;
+}
+
+vec3 computeNormal(vec2 uv) {
+  float eps = 1.0 / 512.0;
+  float h = height(uv);
+  float hx = height(uv + vec2(eps, 0.0));
+  float hy = height(uv + vec2(0.0, eps));
+  vec3 n = normalize(vec3(hx - h, hy - h, 1.0));
+  return n;
+}
+
+void main() {
+  vec3 normal = computeNormal(vUv);
+  vec3 light = normalize(uLightDir);
+  float diffuse = max(dot(normal, light), 0.0);
+  vec3 baseColor = texture2D(uDiffuse, vUv).rgb;
+  gl_FragColor = vec4(baseColor * diffuse, 1.0);
+}
+</script>
+
+<script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// === Shader Compiler ===
+function compileShader(source, type) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(shader));
+  return shader;
+}
+
+// === Program Setup ===
+const vertSrc = document.getElementById('vertex-shader').textContent;
+const fragSrc = document.getElementById('fragment-shader').textContent;
+const program = gl.createProgram();
+gl.attachShader(program, compileShader(vertSrc, gl.VERTEX_SHADER));
+gl.attachShader(program, compileShader(fragSrc, gl.FRAGMENT_SHADER));
+gl.linkProgram(program);
+gl.useProgram(program);
+
+// === Fullscreen Quad ===
+const positions = new Float32Array([
+  -1, -1, 0,   1, -1, 0,   -1, 1, 0,
+   1, -1, 0,   1,  1, 0,  -1, 1, 0
+]);
+const uvs = new Float32Array([
+  0, 0,  1, 0,  0, 1,
+  1, 0,  1, 1,  0, 1
+]);
+
+function buffer(attr, data, size) {
+  const loc = gl.getAttribLocation(program, attr);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+}
+buffer('position', positions, 3);
+buffer('uv', uvs, 2);
+
+// === Light Uniform ===
+const uLightDir = gl.getUniformLocation(program, 'uLightDir');
+gl.uniform3f(uLightDir, 0.5, 1.0, 0.8);
+
+// === Generate Matching Diffuse Texture (Procedural) ===
+function generateDiffuse(size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      const h = Math.sin(u * 20) * 0.1 + Math.cos(v * 20) * 0.1;
+      const g = Math.floor((h + 0.2) / 0.4 * 255); // Normalize
+      const idx = (y * size + x) * 4;
+      imgData.data[idx + 0] = g;
+      imgData.data[idx + 1] = g;
+      imgData.data[idx + 2] = g;
+      imgData.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+const tex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, generateDiffuse(512));
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.uniform1i(gl.getUniformLocation(program, 'uDiffuse'), 0);
+
+// === Render ===
+gl.viewport(0, 0, canvas.width, canvas.height);
+gl.clearColor(0.0, 0.0, 0.0, 1.0);
+gl.clear(gl.COLOR_BUFFER_BIT);
+gl.drawArrays(gl.TRIANGLES, 0, 6);
+</script>
+</body>
+</html>
